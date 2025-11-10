@@ -1,8 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  experimental: {
-    appDir: true,
-  },
+  // Pour que Next transpile le package du monorepo
+  transpilePackages: ["@repo/db"],
 };
 
 export default nextConfig;
