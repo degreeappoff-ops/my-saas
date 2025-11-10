@@ -1,22 +1,19 @@
-import { NextResponse } from 'next/server'
-import { PrismaClient } from '@prisma/client'
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
 
-// Eviter de recréer le client à chaud en dev
-const globalForPrisma = global as unknown as { prisma: PrismaClient }
-export const prisma =
-  globalForPrisma.prisma ||
-  new PrismaClient({
-    // log: ['query'], // décommente pour debug
-  })
-
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
 
 export async function GET() {
-  // Lis les 20 premiers pros
-  const pros = await prisma.professional.findMany({
-    take: 20,
-    include: { user: true },
-    orderBy: { createdAt: 'desc' },
-  })
-  return NextResponse.json(pros)
+  try {
+    const pros = await prisma.professional.findMany({
+      include: { user: true },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+    return NextResponse.json({ count: pros.length, professionals: pros });
+  } catch (err) {
+    console.error("Erreur /api/pros :", err);
+    return NextResponse.json({ error: "Erreur interne du serveur" }, { status: 500 });
+  } finally {
+    await prisma.$disconnect();
+  }
 }
