@@ -1,43 +1,142 @@
-// apps/api/prisma/schema.prisma
-
-generator client {
-  provider = "prisma-client-js"
-}
+// =========================
+// Datasource & Generator
+// =========================
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-enum Role {
-  USER
-  PRO
-  ADMIN
+generator client {
+  provider = "prisma-client-js"
 }
 
+// =========================
+// Enums (rôles & statuts)
+// =========================
+
+enum Role {
+  USER // particulier / client
+  PRO // professionnel
+  ADMIN // administrateur
+}
+
+enum ProStatus {
+  PENDING // en attente de validation admin
+  APPROVED // validé, visible par les users
+  REJECTED // refusé / désactivé
+}
+
+enum AppointmentStatus {
+  PENDING // demande envoyée, en attente de réponse du pro
+  ACCEPTED // acceptée par le pro
+  REJECTED // rejetée par le pro
+  CANCELLED // annulée (user ou pro)
+}
+
+// =========================
+// Models principaux
+// =========================
+
+// Utilisateur principal de la plateforme (USER, PRO ou ADMIN)
 model User {
   id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  role      Role     @default(USER)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  professional Professional?
+  email    String  @unique
+  password String // hashé (même si pour l'instant c'est du fake en dev)
+  name     String?
+
+  role Role @default(USER)
+
+  // Profil pro éventuel (si role = PRO)
+  proProfile ProProfile?
+
+  // Rendez-vous pris en tant que user (client)
+  appointments Appointment[] @relation("UserAppointments")
+
+  @@index([role], name: "idx_user_role")
 }
 
-model Professional {
-  id           String   @id @default(cuid())
-  userId       String   @unique
-  user         User     @relation(fields: [userId], references: [id])
+// Profil PRO rattaché à un User (uniquement si role = PRO)
+model ProProfile {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  profession   String
-  city         String?
-  areaKm       Int?
-  bio          String?
-  avatarUrl    String?
-  ratingAvg    Float?   @default(0)
-  ratingCount  Int?     @default(0)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  // Relation 1-1 avec User
+  user   User   @relation(fields: [userId], references: [id])
+  userId String @unique
+
+  businessName String // Nom de l’entreprise ou du pro
+  trade        String // Métier (plombier, électricien, etc.)
+  city         String
+  zipcode      String?
+  description  String?
+
+  publicEmail String? // coordonnée affichable
+  publicPhone String? // coordonnée affichable
+
+  status ProStatus @default(PENDING)
+
+  // Planning (créneaux de dispo)
+  availabilities AvailabilitySlot[]
+
+  // Rendez-vous reçus en tant que pro
+  appointments Appointment[] @relation("ProAppointments")
+
+  @@index([status], name: "idx_pro_status")
+  @@index([city], name: "idx_pro_city")
+  @@index([trade], name: "idx_pro_trade")
+}
+
+// Créneaux de disponibilité d’un pro
+model AvailabilitySlot {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  pro   ProProfile @relation(fields: [proId], references: [id])
+  proId String
+
+  // Start / end en UTC (à gérer côté front pour les fuseaux)
+  start DateTime
+  end   DateTime
+
+  // True si déjà réservé par un rendez-vous
+  isBooked Boolean @default(false)
+
+  // Rendez-vous liés à ce slot (en général 0 ou 1, mais on laisse la flex)
+  appointments Appointment[] @relation("SlotAppointments")
+
+  @@index([proId, start], name: "idx_slot_pro_start")
+  @@index([isBooked], name: "idx_slot_booked")
+}
+
+// Rendez-vous entre un user (client) et un pro
+model Appointment {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // User (client) qui demande le rendez-vous
+  user   User   @relation("UserAppointments", fields: [userId], references: [id])
+  userId String
+
+  // Pro concerné
+  pro   ProProfile @relation("ProAppointments", fields: [proId], references: [id])
+  proId String
+
+  // Slot éventuellement associé
+  slot   AvailabilitySlot? @relation("SlotAppointments", fields: [slotId], references: [id])
+  slotId String?
+
+  status AppointmentStatus @default(PENDING)
+
+  note String?
+
+  @@index([userId], name: "idx_appt_user")
+  @@index([proId], name: "idx_appt_pro")
+  @@index([status], name: "idx_appt_status")
 }

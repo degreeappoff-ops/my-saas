@@ -1,152 +1,107 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-// On importe prisma depuis @repo/db si dispo.
-// En cas de problème (module absent, DB KO), on bascule en fallback local.
+// Prisma via package partagé (fallback si absent)
 let prisma: any = null;
 try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   prisma = require("@repo/db").prisma;
 } catch {
   prisma = null;
 }
 
-// -----------------------------
-// Validation des query params
-// -----------------------------
+// Helpers zod: transformer "" -> undefined
+const StrOpt = z
+  .string()
+  .optional()
+  .transform((v) => (v && v.trim() !== "" ? v.trim() : undefined));
+
 const QuerySchema = z.object({
   take: z
     .string()
-    .transform((v) => Number(v))
-    .pipe(z.number().min(1).max(50))
-    .optional(),
-  cursor: z.string().optional(),
-  city: z.string().trim().min(1).optional(),
-  profession: z.string().trim().min(1).optional(),
-  q: z.string().trim().min(1).optional(),
+    .optional()
+    .transform((v) => (v ? Number(v) : undefined))
+    .pipe(z.number().min(1).max(50).optional()),
+  cursor: StrOpt,
+  city: StrOpt,
+  profession: StrOpt,
+  q: StrOpt,
 });
 
-// -----------------------------
-// Fallback data (si DB indispo)
-// -----------------------------
-const MOCK_PROS = [
-  {
-    id: "mock-1",
-    profession: "Plombier",
-    city: "Paris",
-    areaKm: 20,
-    bio: "Intervention rapide, devis clair.",
-    ratingAvg: 4.6,
-    ratingCount: 12,
-    user: { email: "pro1@example.com", name: "Bob Pro" },
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "mock-2",
-    profession: "Électricien",
-    city: "Lyon",
-    areaKm: 15,
-    bio: "Dépannage & rénovation.",
-    ratingAvg: 4.8,
-    ratingCount: 31,
-    user: { email: "elec@example.com", name: "Alice Watts" },
-    createdAt: new Date().toISOString(),
-  },
-];
+// Fallback mémoire pour les créations quand la DB est KO
+const FALLBACK_STORE: any[] = [];
 
-// Filtrage simple pour le fallback
-function filterMock(params: { q?: string; city?: string; profession?: string; take: number; cursor?: string }) {
-  const { q, city, profession, take, cursor } = params;
-  let list = MOCK_PROS;
+const CreateProSchema = z.object({
+  email: z.string().email(),
+  name: z.string().min(1),
+  profession: z.string().min(1),
+  city: z.string().optional(),
+  areaKm: z.coerce.number().int().min(0).max(200).optional(),
+  bio: z.string().optional(),
+});
 
-  if (city) list = list.filter((p) => (p.city ?? "").toLowerCase() === city.toLowerCase());
-  if (profession) list = list.filter((p) => p.profession.toLowerCase() === profession.toLowerCase());
-  if (q) {
-    const qq = q.toLowerCase();
-    list = list.filter(
-      (p) =>
-        p.profession.toLowerCase().includes(qq) ||
-        (p.city ?? "").toLowerCase().includes(qq) ||
-        (p.bio ?? "").toLowerCase().includes(qq) ||
-        (p.user?.name ?? "").toLowerCase().includes(qq) ||
-        (p.user?.email ?? "").toLowerCase().includes(qq)
-    );
-  }
-
-  // pagination cursor très simple sur l'array (id)
-  let startIdx = 0;
-  if (cursor) {
-    const idx = list.findIndex((p) => p.id === cursor);
-    if (idx >= 0) startIdx = idx + 1;
-  }
-  const page = list.slice(startIdx, startIdx + take + 1);
-  const hasMore = page.length > take;
-  if (hasMore) page.pop();
-  const nextCursor = hasMore ? page.at(-1)!.id : null;
-
-  return { professionals: page, nextCursor, count: page.length };
-}
-
-// -----------------------------
-// Handler GET
-// -----------------------------
-export async function GET(req: Request) {
+export async function POST(req: Request) {
+  const log = createReqLogger("POST /api/pros");
   try {
-    const url = new URL(req.url);
-    const parsed = QuerySchema.safeParse(Object.fromEntries(url.searchParams));
+    // 1) Auth: réservé aux PRO
+    const session = await auth();
+    // @ts-ignore
+    const role = session?.user?.role ?? "USER";
+    if (role !== "PRO") {
+      log.info("Forbidden (not PRO)", session?.user);
+      return NextResponse.json({ error: "Accès réservé aux PRO" }, { status: 403 });
+    }
+
+    // 2) Validation
+    const json = await req.json().catch(() => ({}));
+    const parsed = CreateProSchema.safeParse(json);
     if (!parsed.success) {
-      return NextResponse.json({ error: "Bad query", details: parsed.error.flatten() }, { status: 400 });
+      log.info("Bad input", parsed.error.flatten());
+      return NextResponse.json({ error: "Bad input", details: parsed.error.flatten() }, { status: 400 });
     }
+    const { email, name, profession, city, areaKm, bio } = parsed.data;
 
-    const { take = 20, cursor, city, profession, q } = parsed.data;
+    // 3) Prisma si dispo, sinon fallback
+    let prisma: any = null;
+    try { prisma = require("@repo/db").prisma; } catch { prisma = null; }
 
-    // Si prisma indisponible ou si la DB lève une erreur → fallback
     if (!prisma) {
-      const data = filterMock({ q, city, profession, take, cursor });
-      return NextResponse.json(data, { status: 200 });
+      const id = "fb-" + Math.random().toString(36).slice(2);
+      const pro = {
+        id,
+        profession,
+        city: city ?? null,
+        areaKm: areaKm ?? null,
+        bio: bio ?? null,
+        ratingAvg: 0,
+        ratingCount: 0,
+        user: { email, name },
+        createdAt: new Date().toISOString(),
+      };
+      FALLBACK_STORE.unshift(pro);
+      log.info("Created in fallback", pro);
+      return NextResponse.json({ created: true, professional: pro, fallback: true }, { status: 201 });
     }
 
-    // Construction du where pour Prisma
-    const where: any = {
-      ...(city ? { city } : {}),
-      ...(profession ? { profession } : {}),
-      ...(q
-        ? {
-            OR: [
-              { profession: { contains: q, mode: "insensitive" } },
-              { city: { contains: q, mode: "insensitive" } },
-              { bio: { contains: q, mode: "insensitive" } },
-              { user: { name: { contains: q, mode: "insensitive" } } },
-              { user: { email: { contains: q, mode: "insensitive" } } },
-            ],
-          }
-        : {}),
-    };
+    // 4) Chemin DB (upsert User, puis upsert Professional)
+    const user = await prisma.user.upsert({
+      where: { email },
+      update: { name, role: "PRO" },
+      create: { email, name, role: "PRO" },
+    });
 
-    const pros = await prisma.professional.findMany({
-      where,
+    const pro = await prisma.professional.upsert({
+      where: { userId: user.id },
+      update: { profession, city, areaKm, bio },
+      create: { userId: user.id, profession, city, areaKm, bio },
       include: { user: true },
-      orderBy: { createdAt: "desc" },
-      take: take + 1,
-      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
 
-    const nextCursor = pros.length > take ? pros.pop()!.id : null;
-
-    return NextResponse.json({ nextCursor, count: pros.length, professionals: pros }, { status: 200 });
+    log.info("Created in DB", pro.id);
+    return NextResponse.json({ created: true, professional: pro }, { status: 201 });
   } catch (err) {
-    console.error("Erreur /api/pros :", err);
-    // En cas d’erreur DB à chaud → fallback mock
-    const url = new URL(req.url);
-    const obj = Object.fromEntries(url.searchParams);
-    const take = Math.min(50, Number(obj.take ?? 20));
-    const data = filterMock({
-      q: obj.q as string | undefined,
-      city: obj.city as string | undefined,
-      profession: obj.profession as string | undefined,
-      take,
-      cursor: obj.cursor as string | undefined,
-    });
-    return NextResponse.json({ ...data, fallback: true }, { status: 200 });
+    log.error("Crash", err);
+    return NextResponse.json({ error: "Erreur interne" }, { status: 500 });
+  } finally {
+    log.end();
   }
 }
