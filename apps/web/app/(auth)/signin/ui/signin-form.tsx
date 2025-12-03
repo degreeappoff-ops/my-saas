@@ -1,60 +1,47 @@
 "use client";
 
 import { useState } from "react";
-import { signIn, getSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import { signIn } from "next-auth/react";
 
-export function SignInForm({ error }: { error?: string }) {
-  const router = useRouter();
+export default function SignInForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [localError, setLocalError] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    setLocalError(null);
+    setMessage(null);
 
     const res = await signIn("credentials", {
       email,
       password,
-      redirect: false, // ⚠️ on gère nous-mêmes la redirection
+      redirect: false,
     });
 
     if (res?.error) {
-      setLocalError("Email ou mot de passe incorrect.");
-      setLoading(false);
-      return;
-    }
-
-    // Récupère la session pour connaître le rôle
-    const session = await getSession();
-    const role = (session?.user as any)?.role;
-
-    if (role === "PRO") {
-      router.push("/pro/dashboard");
-    } else if (role === "ADMIN") {
-      router.push("/admin/dashboard");
+      setMessage("Email ou mot de passe incorrect.");
     } else {
-      router.push("/");
+      setMessage("Connexion réussie ✅");
     }
-  }
 
-  const displayError =
-    localError ||
-    (error === "CredentialsSignin"
-      ? "Email ou mot de passe incorrect."
-      : error
-      ? "Une erreur est survenue lors de la connexion."
-      : null);
+    setLoading(false);
+  }
 
   return (
     <div className="max-w-md mx-auto py-16">
-      <h1 className="text-2xl font-bold mb-6 text-center">Connexion</h1>
+      <h1 className="text-2xl font-bold mb-4 text-center">Connexion</h1>
 
-      {displayError && (
-        <p className="text-red-500 mb-4 text-center">{displayError}</p>
+      <p className="text-sm text-gray-600 mb-4 text-center">
+        Connectez-vous avec l&apos;email et le mot de passe utilisés lors de
+        l&apos;inscription.
+      </p>
+
+      {message && (
+        <p className="text-center mb-4 text-blue-700 font-medium">
+          {message}
+        </p>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-4">

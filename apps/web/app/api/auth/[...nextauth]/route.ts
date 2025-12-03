@@ -1,7 +1,7 @@
 import NextAuth from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { authOptions } from "../../../../lib/auth";
 
-export const runtime = "nodejs"; // important pour bcryptjs
+export const runtime = "nodejs";
 
 const handler = NextAuth(authOptions);
 

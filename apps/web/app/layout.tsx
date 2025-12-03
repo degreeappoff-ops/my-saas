@@ -1,8 +1,9 @@
+import type { Metadata } from "next";
 import "./globals.css";
-import { Providers } from "./providers";
+import Providers from "./providers"; // ⚠️ PAS d'accolades ici
 import Navbar from "@/components/app/Navbar";
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "Mon SaaS",
   description: "Plateforme de prise de rendez-vous",
 };
