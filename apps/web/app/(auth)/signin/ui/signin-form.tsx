@@ -1,9 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { signIn } from "next-auth/react";
+import { signIn, getSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 
 export default function SignInForm() {
+  const router = useRouter();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -22,11 +25,22 @@ export default function SignInForm() {
 
     if (res?.error) {
       setMessage("Email ou mot de passe incorrect.");
-    } else {
-      setMessage("Connexion réussie ✅");
+      setLoading(false);
+      return;
     }
 
-    setLoading(false);
+    // Login OK → on récupère la session pour connaître le rôle
+    const session = await getSession();
+    const role = (session?.user as any)?.role;
+
+    if (role === "PRO") {
+      router.push("/pro/dashboard");
+    } else if (role === "ADMIN") {
+      router.push("/admin/dashboard");
+    } else {
+      // USER + fallback
+      router.push("/");
+    }
   }
 
   return (
@@ -39,7 +53,7 @@ export default function SignInForm() {
       </p>
 
       {message && (
-        <p className="text-center mb-4 text-blue-700 font-medium">
+        <p className="text-center mb-4 text-red-600 font-medium">
           {message}
         </p>
       )}
