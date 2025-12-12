@@ -31,7 +31,9 @@ export default function Navbar() {
             Chemin : <span className="font-mono">{pathname}</span> / Rôle :{" "}
             <span className="font-semibold">{role}</span>
           </span>
-
+        <Link href="/pros" className="text-sm text-gray-700">
+            Voir les pros
+        </Link>
           {status === "authenticated" && (
             <button
               onClick={() => signOut({ callbackUrl: "/" })}
