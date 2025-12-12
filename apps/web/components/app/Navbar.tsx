@@ -14,10 +14,11 @@ export default function Navbar() {
     role = "...";
   } else {
     const userRole = (session?.user as any)?.role;
-    if (userRole) {
-      role = userRole;
-    }
+    if (userRole) role = userRole;
   }
+
+  const isAuthed = status === "authenticated";
+  const isUser = role === "USER";
 
   return (
     <header className="w-full border-b bg-white">
@@ -31,16 +32,32 @@ export default function Navbar() {
             Chemin : <span className="font-mono">{pathname}</span> / Rôle :{" "}
             <span className="font-semibold">{role}</span>
           </span>
-        <Link href="/pros" className="text-sm text-gray-700">
+
+          <Link href="/pros" className="text-sm text-gray-700">
             Voir les pros
-        </Link>
-          {status === "authenticated" && (
+          </Link>
+
+          {/* ✅ Visible uniquement si rôle USER */}
+          {isAuthed && isUser && (
+            <Link href="/appointments" className="text-sm text-gray-700">
+              Mes rendez-vous
+            </Link>
+          )}
+
+          {isAuthed ? (
             <button
               onClick={() => signOut({ callbackUrl: "/" })}
               className="text-xs border px-2 py-1 rounded"
             >
               Se déconnecter
             </button>
+          ) : (
+            <Link
+              href="/signin/ui"
+              className="text-xs border px-2 py-1 rounded"
+            >
+              Se connecter
+            </Link>
           )}
         </div>
       </div>
