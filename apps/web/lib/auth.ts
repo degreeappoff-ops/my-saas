@@ -55,18 +55,37 @@ export const authOptions: NextAuthOptions = {
       // Au premier login, "user" est défini → on copie le rôle dans le token
       if (user) {
         token.role = (user as any).role;
+        token.id = (user as any).id;  // On ajoute l'ID au token
       }
       return token;
     },
     async session({ session, token }) {
       // On propage quelques infos utiles dans session.user
-      if (token?.sub) {
-        (session.user as any).id = token.sub;
+      if (token?.id) {
+        (session.user as any).id = token.id;
       }
       if (token?.role) {
         (session.user as any).role = token.role;
       }
       return session;
+    },
+
+    async redirect({ url, baseUrl }) {
+      // Redirection automatique selon le rôle après connexion
+      if (url.startsWith("/")) return `${baseUrl}${url}`;
+      if (url.startsWith(baseUrl)) return url;
+
+      if (url.includes("/signin/ui")) {
+        const session = await getServerSession(authOptions);
+        const role = session?.user?.role;
+
+        if (role === "PRO") return `${baseUrl}/pro/dashboard`;
+        if (role === "ADMIN") return `${baseUrl}/admin/pros`;
+        return `${baseUrl}/pros`; // USER par défaut
+      }
+      
+      // fallback redirection vers la home
+      return baseUrl;
     },
   },
   pages: {

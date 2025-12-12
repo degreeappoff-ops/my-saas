@@ -38,9 +38,11 @@ export default function SignInForm() {
     } else if (role === "ADMIN") {
       router.push("/admin/dashboard");
     } else {
-      // USER + fallback
-      router.push("/");
+      // ✅ USER + fallback
+      router.push("/pros");
     }
+
+    setLoading(false);
   }
 
   return (
@@ -53,9 +55,7 @@ export default function SignInForm() {
       </p>
 
       {message && (
-        <p className="text-center mb-4 text-red-600 font-medium">
-          {message}
-        </p>
+        <p className="text-center mb-4 text-red-600 font-medium">{message}</p>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -76,6 +76,7 @@ export default function SignInForm() {
         />
 
         <button
+          type="submit"
           disabled={loading}
           className="bg-black text-white w-full py-2 rounded"
         >
