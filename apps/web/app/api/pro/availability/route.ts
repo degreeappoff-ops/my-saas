@@ -4,124 +4,135 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-// GET : liste des créneaux du PRO connecté
+function isOn30MinGrid(d: Date) {
+  const minutes = d.getMinutes();
+  const seconds = d.getSeconds();
+  const ms = d.getMilliseconds();
+  return seconds === 0 && ms === 0 && (minutes === 0 || minutes === 30);
+}
+
 export async function GET() {
   const session = await getServerSession(authOptions);
   const user = session?.user as any;
 
   if (!session || user?.role !== "PRO") {
-    return NextResponse.json({ error: "Non autorisé" }, { status: 403 });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const proProfile = await prisma.proProfile.findFirst({
+  const proProfile = await prisma.proProfile.findUnique({
     where: { userId: user.id },
+    select: { id: true },
   });
 
   if (!proProfile) {
-    return NextResponse.json([]);
+    return NextResponse.json({ error: "ProProfile not found" }, { status: 404 });
   }
 
   const slots = await prisma.availabilitySlot.findMany({
-    where: { proId: proProfile.id }, // ✅ proId
+    where: { proId: proProfile.id },
     orderBy: { start: "asc" },
+    select: { id: true, start: true, end: true, isBooked: true },
   });
 
-  return NextResponse.json(slots);
+  // Format FullCalendar
+  const events = slots.map((s) => ({
+    id: s.id,
+    title: s.isBooked ? "Réservé" : "Disponible",
+    start: s.start.toISOString(),
+    end: s.end.toISOString(),
+    extendedProps: { isBooked: s.isBooked },
+  }));
+
+  return NextResponse.json({ events });
 }
 
-// POST : ajout d'un créneau
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
   const user = session?.user as any;
 
   if (!session || user?.role !== "PRO") {
-    return NextResponse.json({ error: "Non autorisé" }, { status: 403 });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const proProfile = await prisma.proProfile.findFirst({
+  const proProfile = await prisma.proProfile.findUnique({
     where: { userId: user.id },
+    select: { id: true },
   });
 
   if (!proProfile) {
+    return NextResponse.json({ error: "ProProfile not found" }, { status: 404 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const { start, end } = body as { start?: string; end?: string };
+
+  if (!start || !end) {
+    return NextResponse.json({ error: "start et end requis" }, { status: 400 });
+  }
+
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return NextResponse.json({ error: "Dates invalides" }, { status: 400 });
+  }
+
+  if (endDate <= startDate) {
+    return NextResponse.json({ error: "end doit être > start" }, { status: 400 });
+  }
+
+  // Durée minimale 30 minutes
+  const durationMin = (endDate.getTime() - startDate.getTime()) / 60000;
+  if (durationMin < 30) {
+    return NextResponse.json({ error: "Durée minimale 30 minutes" }, { status: 400 });
+  }
+
+  // ✅ On force le grid 30 minutes
+  if (!isOn30MinGrid(startDate) || !isOn30MinGrid(endDate)) {
     return NextResponse.json(
-      { error: "Profil PRO introuvable" },
+      { error: "Les créneaux doivent commencer/finir sur un pas de 30 minutes." },
       { status: 400 }
     );
   }
 
-  const body = await req.json();
-  const { date, startTime, endTime } = body as {
-    date?: string;
-    startTime?: string;
-    endTime?: string;
-  };
-
-  if (!date || !startTime || !endTime) {
-    return NextResponse.json(
-      { error: "date, startTime et endTime sont requis" },
-      { status: 400 }
-    );
-  }
-
-  const start = new Date(`${date}T${startTime}:00`);
-  const end = new Date(`${date}T${endTime}:00`);
-
-  if (isNaN(start.getTime()) || isNaN(end.getTime()) || end <= start) {
-    return NextResponse.json(
-      { error: "Créneau invalide" },
-      { status: 400 }
-    );
-  }
-
-  const slot = await prisma.availabilitySlot.create({
-    data: {
-      proId: proProfile.id, // ✅ FK correcte
-      start,
-      end,
-    },
-  });
-
-  return NextResponse.json(slot, { status: 201 });
-}
-
-// DELETE : suppression d'un créneau
-export async function DELETE(req: Request) {
-  const session = await getServerSession(authOptions);
-  const user = session?.user as any;
-
-  if (!session || user?.role !== "PRO") {
-    return NextResponse.json({ error: "Non autorisé" }, { status: 403 });
-  }
-
-  const proProfile = await prisma.proProfile.findFirst({
-    where: { userId: user.id },
-  });
-
-  if (!proProfile) {
-    return NextResponse.json(
-      { error: "Profil PRO introuvable" },
-      { status: 400 }
-    );
-  }
-
-  const body = await req.json();
-  const { slotId } = body as { slotId?: string };
-
-  if (!slotId) {
-    return NextResponse.json(
-      { error: "slotId requis" },
-      { status: 400 }
-    );
-  }
-
-  // Sécurité : on ne supprime que les créneaux appartenant à ce PRO
-  await prisma.availabilitySlot.deleteMany({
+  // Empêcher overlaps pour ce PRO
+  const overlap = await prisma.availabilitySlot.findFirst({
     where: {
-      id: slotId,
-      proId: proProfile.id, // ✅ on vérifie que c'est bien son slot
+      proId: proProfile.id,
+      AND: [
+        { start: { lt: endDate } }, // existing.start < new.end
+        { end: { gt: startDate } }, // existing.end > new.start
+      ],
     },
+    select: { id: true },
   });
 
-  return NextResponse.json({ ok: true });
+  if (overlap) {
+    return NextResponse.json(
+      { error: "Chevauchement avec un créneau existant." },
+      { status: 400 }
+    );
+  }
+
+  const created = await prisma.availabilitySlot.create({
+    data: {
+      proId: proProfile.id,
+      start: startDate,
+      end: endDate,
+      isBooked: false,
+    },
+    select: { id: true, start: true, end: true, isBooked: true },
+  });
+
+  return NextResponse.json({
+    event: {
+      id: created.id,
+      title: "Disponible",
+      start: created.start.toISOString(),
+      end: created.end.toISOString(),
+      extendedProps: { isBooked: false },
+    },
+  });
 }
