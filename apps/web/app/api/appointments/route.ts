@@ -19,15 +19,15 @@ export async function POST(req: Request) {
     );
   }
 
-  const body = await req.json();
+  const body = await req.json().catch(() => ({}));
   const { slotId } = body as { slotId?: string };
 
-  // 2) Validation basique des données
+  // 2) Validation
   if (!slotId) {
     return NextResponse.json({ error: "slotId est requis." }, { status: 400 });
   }
 
-  // 3) Vérifier que le slot existe
+  // 3) Vérifier slot
   const slot = await prisma.availabilitySlot.findUnique({
     where: { id: slotId },
   });
@@ -36,10 +36,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Créneau introuvable." }, { status: 404 });
   }
 
-  // Ici on dérive proProfileId depuis le slot
   const proProfileId = slot.proId;
 
-  // 4) Vérifier qu'il n'est pas déjà réservé
+  // 4) Si déjà réservé
   if (slot.isBooked) {
     return NextResponse.json(
       { error: "Ce créneau est déjà réservé." },
@@ -47,12 +46,11 @@ export async function POST(req: Request) {
     );
   }
 
+  // 5) Anti-doublon (sécurité)
   const existingAppointment = await prisma.appointment.findFirst({
     where: {
-      slotId: slotId,
-      status: {
-        in: ["PENDING", "ACCEPTED"],
-      },
+      slotId,
+      status: { in: ["PENDING", "ACCEPTED"] },
     },
   });
 
@@ -63,16 +61,17 @@ export async function POST(req: Request) {
     );
   }
 
-  // 5) Créer l'appointment + marquer le slot comme réservé
+  // ✅ Booking instantané : on confirme immédiatement
   const appointment = await prisma.appointment.create({
     data: {
       userId: user.id,
       proProfileId,
       slotId,
-      status: "PENDING",
+      status: "ACCEPTED",
     },
   });
 
+  // ✅ slot indisponible pour tout le monde
   await prisma.availabilitySlot.update({
     where: { id: slotId },
     data: { isBooked: true },
@@ -89,14 +88,12 @@ export async function POST(req: Request) {
   );
 }
 
-// PATCH /api/appointments
-// Body attendu : { appointmentId: string, status: "ACCEPTED" | "REJECTED" }
+// PATCH /api/appointments (on garde : accept/reject pro existant)
 export async function PATCH(req: Request) {
   try {
     const session = await getServerSession(authOptions);
     const user = session?.user as any;
 
-    // Sécurité : il faut être connecté en PRO
     if (!session || user?.role !== "PRO") {
       return NextResponse.json(
         { error: "Vous devez être connecté en tant que professionnel." },
@@ -124,7 +121,6 @@ export async function PATCH(req: Request) {
       );
     }
 
-    // Récupérer le proProfile du PRO connecté
     const proProfile = await prisma.proProfile.findUnique({
       where: { userId: user.id },
       select: { id: true },
@@ -137,7 +133,6 @@ export async function PATCH(req: Request) {
       );
     }
 
-    // Charger le RDV + vérifier qu'il appartient au PRO
     const appt = await prisma.appointment.findUnique({
       where: { id: appointmentId },
       select: { id: true, status: true, proProfileId: true, slotId: true },
@@ -151,22 +146,13 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "Accès interdit." }, { status: 403 });
     }
 
-    // Optionnel mais recommandé : éviter double traitement
-    if (appt.status !== "PENDING") {
-      return NextResponse.json(
-        { error: "Ce rendez-vous a déjà été traité." },
-        { status: 409 }
-      );
-    }
-
-    // Mettre à jour le statut
+    // si tu veux garder une logique “pro décide”, sinon tu peux supprimer PATCH plus tard
     const updated = await prisma.appointment.update({
       where: { id: appointmentId },
       data: { status },
       select: { id: true, status: true, slotId: true },
     });
 
-    // Si refus : on libère le slot pour qu'il redevienne réservable
     if (status === "REJECTED") {
       await prisma.availabilitySlot.update({
         where: { id: updated.slotId },

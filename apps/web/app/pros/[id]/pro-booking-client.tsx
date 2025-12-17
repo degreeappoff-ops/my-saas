@@ -1,12 +1,11 @@
-// apps/web/app/pros/[id]/pro-booking-client.tsx
 "use client";
 
 import { useState } from "react";
 
 type SlotClient = {
   id: string;
-  start: string; // ISO
-  end: string;   // ISO
+  start: string;
+  end: string;
 };
 
 export default function ProBookingClient({ slots }: { slots: SlotClient[] }) {
@@ -40,9 +39,7 @@ export default function ProBookingClient({ slots }: { slots: SlotClient[] }) {
       const res = await fetch("/api/appointments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          slotId: selectedSlot, // 🔹 on envoie seulement le slot
-        }),
+        body: JSON.stringify({ slotId: selectedSlot }),
       });
 
       const json = await res.json().catch(() => ({}));
@@ -50,13 +47,11 @@ export default function ProBookingClient({ slots }: { slots: SlotClient[] }) {
       if (!res.ok) {
         throw new Error(
           json.error ||
-            "Impossible d'envoyer la demande. Êtes-vous bien connecté en tant qu'utilisateur ?"
+            "Impossible de réserver. Êtes-vous bien connecté en tant qu'utilisateur ?"
         );
       }
 
-      setMessage(
-        "Votre demande de rendez-vous a bien été envoyée. Vous serez averti une fois le rendez-vous confirmé."
-      );
+      setMessage("✅ Rendez-vous confirmé ! Vous le retrouvez dans “Mes rendez-vous”.");
     } catch (e: any) {
       setError(e.message || "Erreur inconnue");
     } finally {
@@ -69,9 +64,8 @@ export default function ProBookingClient({ slots }: { slots: SlotClient[] }) {
       <div className="border rounded px-4 py-3 bg-white">
         <h2 className="font-semibold mb-2">Prendre rendez-vous</h2>
         <p className="text-sm text-gray-600">
-          Ce professionnel n&apos;a pas encore indiqué de disponibilités en
-          ligne ou tous les créneaux sont réservés. Vous pouvez le contacter
-          directement par email.
+          Ce professionnel n&apos;a pas encore indiqué de disponibilités en ligne
+          ou tous les créneaux sont réservés.
         </p>
       </div>
     );
@@ -103,13 +97,12 @@ export default function ProBookingClient({ slots }: { slots: SlotClient[] }) {
           disabled={loading}
           className="px-4 py-2 rounded bg-black text-white text-sm"
         >
-          {loading ? "Envoi..." : "Demander ce rendez-vous"}
+          {loading ? "Réservation..." : "Réserver ce rendez-vous"}
         </button>
       </form>
 
       <p className="text-xs text-gray-500">
-        Vous devez être connecté en tant qu&apos;utilisateur pour envoyer une
-        demande de rendez-vous.
+        Vous devez être connecté en tant qu&apos;utilisateur pour réserver.
       </p>
     </div>
   );
