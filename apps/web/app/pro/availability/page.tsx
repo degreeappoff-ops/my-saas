@@ -1,27 +1,50 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import ProAvailabilityClient from "./pro-availability-client";
 import ProAvailabilityCalendar from "./pro-availability-calendar";
+import ProAvailabilityToolbar from "./pro-availability-toolbar";
 
 export default async function ProAvailabilityPage() {
   const session = await getServerSession(authOptions);
-  const role = (session?.user as any)?.role;
+  const user = session?.user as any;
 
-  if (!session || role !== "PRO") {
+  if (!session || user?.role !== "PRO") {
     redirect("/signin/ui");
   }
 
-  return (
-    <div className="max-w-6xl mx-auto py-10 space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold">Mes disponibilités</h1>
-        <p className="text-sm text-gray-600">
-          Sélectionnez une plage pour créer un créneau (pas de 30 min). Cliquez sur un
-          créneau disponible pour le supprimer.
-        </p>
-      </div>
+  const proProfile = await prisma.proProfile.findFirst({
+    where: { userId: user.id },
+  });
 
-      <ProAvailabilityCalendar />
+  if (!proProfile) {
+    return (
+      <div className="max-w-3xl mx-auto py-10">
+        <p className="text-sm text-red-600">Profil professionnel introuvable.</p>
+      </div>
+    );
+  }
+
+  const dbSlots = await prisma.availabilitySlot.findMany({
+    where: { proId: proProfile.id },
+    orderBy: { start: "asc" },
+  });
+
+  const initialSlots = dbSlots.map((s) => ({
+    id: s.id,
+    start: s.start.toISOString(),
+    end: s.end.toISOString(),
+    isBooked: s.isBooked,
+  }));
+
+  return (
+    <div className="max-w-5xl mx-auto py-10 space-y-4">
+      <ProAvailabilityToolbar />
+
+      {/* Ta vue calendar + ta vue liste (selon ce que tu as gardé) */}
+      <ProAvailabilityCalendar initialSlots={initialSlots} />
+      <ProAvailabilityClient initialSlots={initialSlots} />
     </div>
   );
 }

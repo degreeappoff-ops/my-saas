@@ -1,33 +1,76 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type SlotClient = {
   id: string;
-  start: string;
-  end: string;
+  start: string; // ISO
+  end: string;   // ISO
 };
 
+function dateKey(iso: string) {
+  const d = new Date(iso);
+  // YYYY-MM-DD en local
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function prettyDay(yyyyMMdd: string) {
+  const d = new Date(`${yyyyMMdd}T00:00:00`);
+  return d.toLocaleDateString("fr-FR", {
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+  });
+}
+
+function prettyTime(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+}
+
 export default function ProBookingClient({ slots }: { slots: SlotClient[] }) {
-  const [selectedSlot, setSelectedSlot] = useState<string>("");
+  const grouped = useMemo(() => {
+    const map = new Map<string, SlotClient[]>();
+    for (const s of slots) {
+      const k = dateKey(s.start);
+      if (!map.has(k)) map.set(k, []);
+      map.get(k)!.push(s);
+    }
+    // tri des jours + tri des heures
+    const keys = Array.from(map.keys()).sort();
+    for (const k of keys) {
+      map.get(k)!.sort((a, b) => (a.start < b.start ? -1 : 1));
+    }
+    return { map, keys };
+  }, [slots]);
+
+  const [selectedDate, setSelectedDate] = useState<string>("");
+  const [selectedSlotId, setSelectedSlotId] = useState<string>("");
+
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  function formatSlot(isoStart: string, isoEnd: string) {
-    const s = new Date(isoStart);
-    const e = new Date(isoEnd);
-    return `${s.toLocaleString("fr-FR", {
-      dateStyle: "short",
-      timeStyle: "short",
-    })} → ${e.toLocaleTimeString("fr-FR", { timeStyle: "short" })}`;
-  }
+  // ✅ init date sélectionnée (si slots existent)
+  useEffect(() => {
+    if (!selectedDate && grouped.keys.length > 0) {
+      setSelectedDate(grouped.keys[0]);
+    }
+    // reset slot quand on change les données
+    if (grouped.keys.length === 0) {
+      setSelectedDate("");
+      setSelectedSlotId("");
+    }
+  }, [grouped.keys.join("|")]); // ok pour déclencher quand keys changent
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  const daySlots = selectedDate ? grouped.map.get(selectedDate) ?? [] : [];
 
-    if (!selectedSlot) {
-      setError("Merci de sélectionner un créneau.");
+  async function book() {
+    if (!selectedSlotId) {
+      setError("Merci de sélectionner une heure.");
       return;
     }
 
@@ -39,7 +82,7 @@ export default function ProBookingClient({ slots }: { slots: SlotClient[] }) {
       const res = await fetch("/api/appointments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slotId: selectedSlot }),
+        body: JSON.stringify({ slotId: selectedSlotId }),
       });
 
       const json = await res.json().catch(() => ({}));
@@ -47,13 +90,13 @@ export default function ProBookingClient({ slots }: { slots: SlotClient[] }) {
       if (!res.ok) {
         throw new Error(
           json.error ||
-            "Impossible de réserver. Êtes-vous bien connecté en tant qu'utilisateur ?"
+            "Impossible de réserver. Êtes-vous connecté en tant qu'utilisateur ?"
         );
       }
 
-      setMessage("✅ Rendez-vous confirmé ! Vous le retrouvez dans “Mes rendez-vous”.");
+      setMessage("Rendez-vous réservé ✅");
     } catch (e: any) {
-      setError(e.message || "Erreur inconnue");
+      setError(e?.message || "Erreur inconnue");
     } finally {
       setLoading(false);
     }
@@ -61,49 +104,103 @@ export default function ProBookingClient({ slots }: { slots: SlotClient[] }) {
 
   if (slots.length === 0) {
     return (
-      <div className="border rounded px-4 py-3 bg-white">
+      <div className="border rounded p-4 bg-white">
         <h2 className="font-semibold mb-2">Prendre rendez-vous</h2>
         <p className="text-sm text-gray-600">
-          Ce professionnel n&apos;a pas encore indiqué de disponibilités en ligne
-          ou tous les créneaux sont réservés.
+          Aucun créneau disponible pour le moment.
         </p>
       </div>
     );
   }
 
   return (
-    <div className="border rounded px-4 py-3 bg-white space-y-3">
-      <h2 className="font-semibold mb-2">Prendre rendez-vous</h2>
+    <div className="border rounded p-4 bg-white space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold">Prendre rendez-vous</h2>
+        <p className="text-xs text-gray-500">
+          Sélectionnez un jour puis une heure (pas de 30 min).
+        </p>
+      </div>
 
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <select
-          className="border rounded px-3 py-2 text-sm w-full"
-          value={selectedSlot}
-          onChange={(e) => setSelectedSlot(e.target.value)}
-        >
-          <option value="">Sélectionnez un créneau…</option>
-          {slots.map((slot) => (
-            <option key={slot.id} value={slot.id}>
-              {formatSlot(slot.start, slot.end)}
-            </option>
-          ))}
-        </select>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Colonne jours */}
+        <div className="border rounded p-3">
+          <div className="text-xs font-semibold text-gray-600 mb-2">
+            Jours disponibles
+          </div>
+          <div className="space-y-2">
+            {grouped.keys.map((k) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => {
+                  setSelectedDate(k);
+                  setSelectedSlotId("");
+                  setMessage(null);
+                  setError(null);
+                }}
+                className={[
+                  "w-full text-left px-3 py-2 rounded border text-sm",
+                  selectedDate === k ? "bg-black text-white" : "bg-white",
+                ].join(" ")}
+              >
+                {prettyDay(k)}
+              </button>
+            ))}
+          </div>
+        </div>
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
-        {message && <p className="text-sm text-green-700">{message}</p>}
+        {/* Colonne heures */}
+        <div className="md:col-span-2 border rounded p-3">
+          <div className="text-xs font-semibold text-gray-600 mb-2">
+            Heures disponibles
+          </div>
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="px-4 py-2 rounded bg-black text-white text-sm"
-        >
-          {loading ? "Réservation..." : "Réserver ce rendez-vous"}
-        </button>
-      </form>
+          {daySlots.length === 0 ? (
+            <p className="text-sm text-gray-600">
+              Aucun créneau pour ce jour.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {daySlots.map((s) => {
+                const label = `${prettyTime(s.start)} - ${prettyTime(s.end)}`;
+                const active = selectedSlotId === s.id;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => setSelectedSlotId(s.id)}
+                    className={[
+                      "px-3 py-2 rounded border text-sm",
+                      active ? "bg-black text-white" : "bg-white",
+                    ].join(" ")}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
-      <p className="text-xs text-gray-500">
-        Vous devez être connecté en tant qu&apos;utilisateur pour réserver.
-      </p>
+          <div className="mt-4 space-y-2">
+            {error && <p className="text-sm text-red-600">{error}</p>}
+            {message && <p className="text-sm text-green-700">{message}</p>}
+
+            <button
+              type="button"
+              onClick={book}
+              disabled={loading || !selectedSlotId}
+              className="px-4 py-2 rounded bg-black text-white text-sm disabled:opacity-50"
+            >
+              {loading ? "Réservation..." : "Réserver"}
+            </button>
+
+            <p className="text-xs text-gray-500">
+              Vous devez être connecté en tant qu&apos;utilisateur pour réserver.
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

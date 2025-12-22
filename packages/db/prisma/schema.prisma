@@ -34,6 +34,16 @@ enum AppointmentStatus {
   CANCELLED // annulée (user ou pro)
 }
 
+enum Weekday {
+  MON
+  TUE
+  WED
+  THU
+  FRI
+  SAT
+  SUN
+}
+
 // =========================
 // Models principaux
 // =========================
@@ -86,6 +96,8 @@ model ProProfile {
   // Rendez-vous reçus en tant que pro
   appointments Appointment[] @relation("ProAppointments")
 
+  workingHours ProWorkingHours[]
+
   @@index([status], name: "idx_pro_status")
   @@index([city], name: "idx_pro_city")
   @@index([trade], name: "idx_pro_trade")
@@ -129,4 +141,23 @@ model Appointment {
   user       User             @relation("UserAppointments", fields: [userId], references: [id])
   proProfile ProProfile       @relation("ProAppointments", fields: [proProfileId], references: [id])
   slot       AvailabilitySlot @relation("SlotAppointments", fields: [slotId], references: [id])
+}
+
+model ProWorkingHours {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  pro   ProProfile @relation(fields: [proId], references: [id])
+  proId String
+
+  day     Weekday
+  enabled Boolean @default(false)
+
+  // Minutes depuis minuit (ex: 9h00 = 540)
+  startMin Int @default(540)
+  endMin   Int @default(1080)
+
+  @@unique([proId, day], name: "uniq_pro_day")
+  @@index([proId], name: "idx_workhours_pro")
 }
